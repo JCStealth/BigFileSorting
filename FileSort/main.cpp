@@ -8,7 +8,7 @@
 #include <stdlib.h>         // rand()
 #define FILENAME_IN  "unsorted.dmp"
 #define FILENAME_OUT "sorted.dmp"
-//#define GENERATE_FILE
+#define GENERATE_FILE
 #define INPUT_FILE_LENGTH (1024*1024)  // for input file generation: number of elements generated
 #define MAX_OPERATE_MEMORY (1024*64*10)
 #define MAX_WORKERS 10
@@ -91,7 +91,7 @@ public:
 };
 
 
-#define RAND_MAX 65536
+#define RAND_MAX 65536*1024
 FileInfo *gFiles = NULL;
 int numOfFiles = 0;
 int numOfElems = 0;
@@ -271,20 +271,21 @@ int WorkerClass::JobMerge()
 	fpOut = fopen(outFileName.c_str(), "wb");
 	int datalen = MergeFiles(fileSrc1Info->fp, fileSrc2Info->fp, fpOut);    
 	fclose(fpOut); fpOut = NULL;
-	fclose(fileSrc1Info->fp); fileSrc1Info->fp = NULL;
-	fclose(fileSrc2Info->fp); fileSrc2Info->fp = NULL;
+	fclose(fileSrc1Info->fp); 
+	fclose(fileSrc2Info->fp); 
 
 	printf("Worker %d merged: %s(%d) + %s(%d) -> %s(%d)\n", ID,
 		fileSrc1Info->name.c_str(), fileSrc1Info->length,
 		fileSrc2Info->name.c_str(), fileSrc2Info->length,
 		outFileName.c_str(), datalen);
 	gFilesMtx.lock();
+	fileSrc1Info->fp = NULL; remove(fileSrc1Info->name.c_str()); 
+	fileSrc2Info->fp = NULL; remove(fileSrc2Info->name.c_str());
 	fileSrc1Info->name = outFileName;
 	fileSrc1Info->length = datalen;
 	fileSrc1Info->state = bsToMerge;
 	fileSrc2Info->length = 0;
 	fileSrc2Info->state = bsDeleted;
-	remove(fileSrc2Info->name.c_str());
 	gFilesMtx.unlock();
 	
 	return datalen;    
@@ -355,7 +356,8 @@ int main()
 		fileUnsorted.mtx.unlock();
 		for (int i = 0; i < INPUT_FILE_LENGTH; i++)
 		{
-			unsigned int rndnum = (rand() << 16) + rand();
+			unsigned int rndnum = 0;
+			for (int k = 0; k < 4; k++, rndnum = (rndnum << 8) | (rand() & 0xFF));
 			fwrite(&rndnum, sizeof(rndnum), 1, fileUnsorted.fp);
 		}
 		fileUnsorted.mtx.lock();
