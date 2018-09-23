@@ -3,21 +3,15 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
-#include <iostream>
-#include <vector>
+#include <string>
 #include <algorithm>        // sort()
 #include <stdlib.h>         // rand()
 #define FILENAME_IN  "unsorted.dmp"
 #define FILENAME_OUT "sorted.dmp"
-#define GENERATE_FILE
+//#define GENERATE_FILE
 #define INPUT_FILE_LENGTH (1024*1024)  // for input file generation: number of elements generated
-#define MAX_OPERATE_MEMORY (1024*64)
+#define MAX_OPERATE_MEMORY (1024*64*10)
 #define MAX_WORKERS 10
-#define __WIN32
-
-#ifdef __WIN32
-#include <Windows.h>
-#endif
 
 using namespace std;
 
@@ -30,23 +24,8 @@ enum BlockStates
 	bsDone    = 0x0008,
 	bsReading = 0x0010,
 	bsWriting = 0x0020,
+	bsWorking = (bsToSort|bsToMerge|bsReading|bsWriting),
 };
-
-/*enum BlockStates
-{
-    mbsNone         = 0x0000,
-	mbsLoaded       = 0x0001,
-	mbsAssigned     = 0x0002,
-	mbsSorting      = 0x0004,
-	mbsSorted       = 0x0008,
-	mbsMerging      = 0x0010,
-	mbsMerged       = 0x0020,
-    mbsGenerating   = 0x0040,
-	mbsOpenedRead   = 0x0100,
-	mbsOpenedWrite  = 0x0200,
-	mbsDone         = 0x1000,
-    mbsDeleted      = 0x8000
-};*/
 
 typedef unsigned int SortData_t;
 
@@ -64,15 +43,17 @@ struct FileInfo
 enum WorkerStates
 {
     wsIdle,
-	wsSorting,
-	wsSorted,
-	wsMerging,
-	wsMerged,
+	wsSort,
+	wsMerge,
+	wsSearch,
 };
 
 
 class WorkerClass
 {
+private:
+	int GetFileBlkCntFromName(string fileName);
+
 public:
 	int ID;
 	SortData_t *buffer;
@@ -80,7 +61,6 @@ public:
 	int datalen;
 	WorkerStates state;
 
-	HANDLE  thrd;
 	thread thd;
 	mutex mtx;
 	condition_variable cv;
@@ -99,14 +79,14 @@ public:
 	{
 		ID = id; 
 		state = wsIdle;
-		thrd = NULL; 
 		buffer = memBuffer; 
 		buflen = memBufLen;
 		datalen = 0;
 		fpOut = NULL;
-		thd = thread(Work());
+		files = fileArray;
+		thd = thread(&WorkerClass::Work, this);
 	};
-	~WorkerClass();
+	//~WorkerClass();
 
 };
 
@@ -114,93 +94,133 @@ public:
 #define RAND_MAX 65536
 FileInfo *gFiles = NULL;
 int numOfFiles = 0;
+int numOfElems = 0;
 mutex gFilesMtx;
+condition_variable gFilesProduced;
 
 
-/*int gCounter = 0;
-DWORD WINAPI ThreadMain(LPVOID lpParameters)
+int WorkerClass::GetFileBlkCntFromName(string fileName)
 {
-	WorkerInfo *info = reinterpret_cast <WorkerInfo*> (lpParameters);
-	info->state = wsSorting;
-
-	for (int i = 0; i < 10; i++)
+	int fileBlkCntIdx = 0;
+	int fileBlkCnt = 0;
+	fileBlkCntIdx = fileName.find_last_of('(');
+	if (fileBlkCntIdx > 0)
 	{
-		gCounter++;
-		printf("Worker %d[%X] step %d: %d\n", info->id, info->thrd, i, gCounter);
-		Sleep(400);
+		string::size_type endSymIdx = 0;
+		string fileBlkCntStr = fileName.substr(fileBlkCntIdx + 1);
+		fileBlkCnt = stoi(fileBlkCntStr, &endSymIdx);
+		if (fileBlkCntStr.substr(endSymIdx, 1) != ")")
+			printf("Worker %d: error in file name: %s\n", ID, fileName.c_str());
 	}
-	printf("Worker %d exit\n", info->id);
-	info->state = wsSorted;
-	ExitThread(0);
-}*/
+	else fileBlkCnt = 1;
+	return fileBlkCnt;
+}
 
-/*void SortBlock(SortData_t *arr, int n, int id)
-{
-	char filename[0x100];
-
-	sort(arr, arr + n);
-	sprintf(filename, "%s_s0_%d", FILENAME_OUT, id);
-	FILE *fp = fopen(filename, "wb");
-	fwrite(arr, sizeof(SortData_t), n, fp);
-	fclose(fp);
-}*/
 
 int WorkerClass::Work()
 {
-	if (files[0].state & bsDeleted)
+	int totalPreSorted = 0;
+	int totalSorted = 0;
+	int elemCount;
+	state = wsSearch;
+	printf("Worker %d started\n", ID);
+
+    while(state != wsIdle)
 	{
-		JobMerge();
+		if (files[0].state & bsDeleted)
+		{
+			state = wsMerge;
+			printf("Worker %d merging...\n", ID);
+			elemCount = JobMerge();
+			printf("Worker %d merged %d elements\n", ID, elemCount);
+			if (elemCount > 0)
+			{
+				totalSorted += elemCount;
+				gFilesProduced.notify_all();
+			}
+			else if(elemCount == 0) state = wsIdle;
+		}
+		else
+		{
+			state = wsSort;
+			printf("Worker %d sorting...\n", ID);
+			elemCount = JobPreSort();
+			printf("Worker %d presorted %d elements\n", ID, elemCount);
+			if (elemCount > 0)
+			{
+				totalPreSorted += elemCount;
+				gFilesProduced.notify_all();    // signal that new file is ready
+			}
+		}
 	}
-	else
-	{
-		JobPreSort();
-	}
+	printf("Worker %d finished: %d elements presorted, %d elements merged\n", ID, totalPreSorted, totalSorted);
+	return totalSorted;
 }
 
 int WorkerClass::JobPreSort()
 {
-	bool jobStop = false;
+	bool jobAct = true;
 	FileInfo *fileSrcInfo = &files[0];
+	int fileIdx;
+
 	gFilesMtx.lock();
+	//fileSrcInfo->fp = fopen(fileSrcInfo->name.c_str(), "rb");
 	if (fileSrcInfo->state & bsToSort)
 	{
+		int fileSrcPtr = ftell(fileSrcInfo->fp);
 		datalen = fread(buffer, sizeof(buffer[0]), buflen, fileSrcInfo->fp);
+		if (datalen >= 0)
+			printf("Worker %d read from %s: %d..%d\n", ID, files[0].name.c_str(), fileSrcPtr, fileSrcPtr + (datalen * sizeof(buffer[0])) - 1);
+		else printf("Worker %d read from %s error %d\n", ID, files[0].name.c_str(), errno);
 		if (datalen < buflen)
 		{
 			fileSrcInfo->state = bsDeleted;
-			fclose(fileSrcInfo->fp);
-			jobStop = true;
+			fclose(fileSrcInfo->fp); fileSrcInfo->fp = NULL;
+			if (datalen == 0) jobAct = false;
 		}
 	}
+	else
+		jobAct = false;
+	//fclose(fileSrcInfo->fp);
+    //fileSrcInfo->fp = NULL;
 	gFilesMtx.unlock();
-	if (jobStop) return 0;
+	if (!jobAct) return 0;
 
 	sort(buffer, buffer + buflen);
 
 	FileInfo *fileDstInfo = NULL;
 	gFilesMtx.lock();  	
 
-	for (int f = 1; (f < numOfFiles) && (fileDstInfo == NULL); f++)
+	for (fileIdx = 1; (fileIdx < numOfFiles) && (fileDstInfo == NULL); fileIdx++)
 	{
-		if (files[f].state == bsNone || files[f].state == bsDeleted)
-			fileDstInfo = &files[f];
+		if (files[fileIdx].state == bsNone || files[fileIdx].state == bsDeleted)
+			fileDstInfo = &files[fileIdx];
 	}
 
-	fileDstInfo->state = bsWriting;
+	if (fileDstInfo) fileDstInfo->state = bsWriting;
 	gFilesMtx.unlock();
 
 	char fileSuffix[0x20];
-	sprintf(fileSuffix, "_w%d", ID);
-	fileDstInfo->name = fileSrcInfo->name + fileSuffix;
-	fileDstInfo->fp = fopen(fileDstInfo->name.c_str(), "w");
+	sprintf(fileSuffix, "_%04X", fileIdx);
+	outFileName = fileSrcInfo->name + fileSuffix;
+	fpOut = fopen(outFileName.c_str(), "wb");
+	int a = errno;
+	if (fpOut == NULL)
+	{
+		fprintf(stderr, "Worker %d cannot create file %s (error %d)\n", ID, outFileName.c_str(),errno);
+		return -1;
+	}
+	fileDstInfo->name = outFileName;
+	fileDstInfo->fp = fpOut;
 	fwrite(buffer, sizeof(buffer[0]), datalen, fileDstInfo->fp);
 	fclose(fileDstInfo->fp);
 
 	fileDstInfo->state = bsToMerge;
 	fileDstInfo->length = datalen;
 	fileDstInfo->fp = NULL;
+	fpOut = NULL;
+	printf("Worker %d produced: %s\n", ID, outFileName.c_str());
 
-	// CV - signal that new file is ready
 	return datalen;
 }
 
@@ -208,41 +228,66 @@ int WorkerClass::JobMerge()
 {
 	FileInfo *fileSrc1Info = NULL;
 	FileInfo *fileSrc2Info = NULL;
-	FileInfo *fileDstInfo = NULL;
-	gFilesMtx.lock();
-
-	for (int f = 1; (f < numOfFiles) && (fileSrc1Info == NULL || fileSrc2Info == NULL); f++)
-	{
-		if (files[f].state & bsToMerge)
-		{
-			if (fileSrc1Info == NULL) fileSrc1Info = &files[f];
-			else fileSrc2Info = &files[f];
-			files[f].state = bsReading;
-		}
-	}
-	if (fileSrc2Info == NULL)
-	{
-		fileSrc1Info->state = bsToMerge;
-	}
-	gFilesMtx.unlock();
-
-	if (fileSrc1Info == NULL || fileSrc2Info == NULL) return -1;
-
-	char fileName[0x100];
-	sprintf(fileName, "%s-%s_w%d", fileSrc1Info->name.c_str(), strrchr(fileSrc2Info->name.c_str(),'w'), ID);
-
-	outFileName = fileName;
-	fpOut = fopen(outFileName.c_str(), "w");
-	int datalen = MergeFiles(fileSrc1Info->fp, fileSrc2Info->fp, fpOut);
+	int filesWorkingCount = 0;
 	
+	//gFilesMtx.lock();
+	do
+	{
+		fileSrc1Info = NULL;
+		fileSrc2Info = NULL;
+		filesWorkingCount = 0;
+
+		unique_lock <mutex> lock(gFilesMtx);
+
+		for (int f = 1; (f < numOfFiles) && (fileSrc2Info == NULL); f++)
+		{
+			if (files[f].state & bsWorking) filesWorkingCount++;
+			if (files[f].state & bsToMerge)
+			{
+				if (fileSrc1Info == NULL) fileSrc1Info = &files[f];
+				else fileSrc2Info = &files[f];
+				files[f].state = bsReading;
+			}
+		}
+		if (filesWorkingCount <= 1) return 0;
+		if (fileSrc2Info == NULL)
+		{
+			if (fileSrc1Info) fileSrc1Info->state = bsToMerge;
+			gFilesProduced.wait(lock);
+		}
+
+	} while (fileSrc2Info == NULL);
+
+	//gFilesMtx.unlock();
+
+	if (fileSrc1Info->length + fileSrc2Info->length == files[0].length)
+		outFileName = FILENAME_OUT;
+	else
+	  outFileName = fileSrc1Info->name.substr(0, fileSrc1Info->name.find_last_of('(')) + '(' +
+		to_string(GetFileBlkCntFromName(fileSrc1Info->name) + GetFileBlkCntFromName(fileSrc2Info->name)) + ')';
+	
+	fileSrc1Info->fp = fopen(fileSrc1Info->name.c_str(), "rb");
+	fileSrc2Info->fp = fopen(fileSrc2Info->name.c_str(), "rb");
+	fpOut = fopen(outFileName.c_str(), "wb");
+	int datalen = MergeFiles(fileSrc1Info->fp, fileSrc2Info->fp, fpOut);    
+	fclose(fpOut); fpOut = NULL;
+	fclose(fileSrc1Info->fp); fileSrc1Info->fp = NULL;
+	fclose(fileSrc2Info->fp); fileSrc2Info->fp = NULL;
+
+	printf("Worker %d merged: %s(%d) + %s(%d) -> %s(%d)\n", ID,
+		fileSrc1Info->name.c_str(), fileSrc1Info->length,
+		fileSrc2Info->name.c_str(), fileSrc2Info->length,
+		outFileName.c_str(), datalen);
 	gFilesMtx.lock();
 	fileSrc1Info->name = outFileName;
 	fileSrc1Info->length = datalen;
 	fileSrc1Info->state = bsToMerge;
 	fileSrc2Info->length = 0;
 	fileSrc2Info->state = bsDeleted;
+	remove(fileSrc2Info->name.c_str());
 	gFilesMtx.unlock();
-
+	
+	return datalen;    
 }
 
 
@@ -254,7 +299,6 @@ int WorkerClass::MergeFiles(FILE *fpIn1, FILE *fpIn2, FILE *fpOut)
 	SortData_t *bufSrc2 = buffer + 3 * sublen;
 	int lenDst = sublen*2, lenSrc1 = 0, lenSrc2 = 0;
 	int ptrDst = 0, ptrSrc1 = sublen, ptrSrc2 = sublen;
-	//FILE *fpOut = fopen("tmp.dmp", "wb");
 	int totalDone = 0;
 
 	do
@@ -277,12 +321,12 @@ int WorkerClass::MergeFiles(FILE *fpIn1, FILE *fpIn2, FILE *fpOut)
 		}
 		
 		if(ptrSrc1 >= 0)
-		  for (int min = (ptrSrc2 >= 0) ? bufSrc2[ptrSrc2] : 0; 
-			 ((bufSrc1[ptrSrc1] < min) || (ptrSrc2 < 0)) && (ptrSrc1 < lenSrc1) && (ptrDst < lenDst); 
+		  for (unsigned int min = (ptrSrc2 >= 0) ? bufSrc2[ptrSrc2] : 0; 
+			 ((bufSrc1[ptrSrc1] <= min) || (ptrSrc2 < 0)) && (ptrSrc1 < lenSrc1) && (ptrDst < lenDst); 
 			 bufDst[ptrDst++] = bufSrc1[ptrSrc1++]);
 		if(ptrSrc2 >= 0)
-		  for (int min = (ptrSrc1 >= 0) ? bufSrc1[ptrSrc1] : 0; 
-			 ((bufSrc2[ptrSrc2] < min) || (ptrSrc1 < 0))&& (ptrSrc2 < lenSrc2) && (ptrDst < lenDst); 
+		  for (unsigned int min = (ptrSrc1 >= 0) ? bufSrc1[ptrSrc1] : 0; 
+			 ((bufSrc2[ptrSrc2] <= min) || (ptrSrc1 < 0))&& (ptrSrc2 < lenSrc2) && (ptrDst < lenDst); 
 			 bufDst[ptrDst++] = bufSrc2[ptrSrc2++]);
 
 	} while (ptrSrc1 >= 0 || ptrSrc2 >= 0);
@@ -293,7 +337,6 @@ int WorkerClass::MergeFiles(FILE *fpIn1, FILE *fpIn2, FILE *fpOut)
 		totalDone += ptrDst;
 	}
 
-	//fclose(fpOut);
 	return totalDone;
 }
 
@@ -332,20 +375,17 @@ int main()
 	
 	struct stat statIn;
 	stat(FILENAME_IN, &statIn);
-	int numOfElems = statIn.st_size / sizeof(SortData_t);
-	int numOfFiles = numOfElems / memBlockSize;
-	FileInfo *files = new FileInfo[numOfFiles];
+	numOfElems = statIn.st_size / sizeof(SortData_t);	
+	numOfFiles = numOfElems / memBlockSize + 1;   // +1 - additional source file placed to gFiles[0] 
+	if (numOfElems % memBlockSize) numOfFiles++;
+	gFiles = new FileInfo[numOfFiles];
 	
-	//for (int f = 1; f < numOfFiles; f++)
+	FileInfo *fileSrc = &gFiles[0];
+	fileSrc->name = fileUnsorted.name;
+	fileSrc->state = bsToSort;
+	fileSrc->length = numOfElems;
 	
-	files[0].name = fileUnsorted.name;
-	files[0].state = bsToSort;
-	files[0].length = numOfElems;
-	files[0].fp = NULL;
-
-	/*FILE *fp = fopen(FILENAME_IN, "rb");
-	fread(buffer, sizeof(SortData_t), memBlockSize * numOfWorkers, fp);
-	fclose(fp);*/
+	fileSrc->fp = fopen(fileSrc->name.c_str(),"rb");
 
 	for (int i = 0; i < numOfWorkers; i++)
 	{
@@ -378,7 +418,7 @@ int main()
 	
 	delete[] buffer;
 	delete[] workers;
-	delete[] files;
+	delete[] gFiles;
 	return 0;
 
 }
