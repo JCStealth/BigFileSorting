@@ -38,7 +38,7 @@ public:
 
 	int Work();
 
-	WorkerClass(int id, GlobalParams *globParams)
+	WorkerClass(int id, GlobalParams *globParams, int startThread = 1)
 	{
 		ID = id;
 		gParams = globParams;
@@ -48,7 +48,7 @@ public:
 		files = gParams->files;
 		datalen = 0;
 		fpOut = NULL;
-		thd = std::thread(&WorkerClass::Work, this);
+		if(startThread) thd = std::thread(&WorkerClass::Work, this);
 	};
 	//~WorkerClass();
 
