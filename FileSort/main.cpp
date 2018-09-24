@@ -18,12 +18,10 @@ using namespace std;
 // 0 - ok, 1 - only generate input file, <0 - error
 int ParseCommandLine(int argc, char *argv[], GlobalParams *gParams)
 {
-	int arg = 1;
 	bool outFileSet = false;
 	bool inFileGenerate = false;
-	while (arg < argc)
+	for (int arg = 1; arg < argc; arg++)
 	{
-
 		int paramInt;
 		char *pArgKey = argv[arg];
 		if (pArgKey[0] == '-')
@@ -47,7 +45,7 @@ int ParseCommandLine(int argc, char *argv[], GlobalParams *gParams)
 				break;
 			case 'i':
 				gParams->inFile.name = argv[++arg];
-				if (!outFileSet) gParams->inFile.name = gParams->inFile.name + "_sort";
+				if (!outFileSet) gParams->outFile.name = gParams->inFile.name + "_sort";
 				break;
 			case 'o':
 				gParams->outFile.name = argv[++arg];
@@ -76,8 +74,8 @@ int ParseCommandLine(int argc, char *argv[], GlobalParams *gParams)
 		}
 		else
 		{
-			gParams->inFile.name = argv[++arg];
-			if (!outFileSet) gParams->inFile.name = gParams->inFile.name + "_sort";
+			gParams->inFile.name = argv[arg];
+			if (!outFileSet) gParams->outFile.name = gParams->inFile.name + "_sort";
 		}
 	}
 

@@ -89,7 +89,7 @@ int WorkerClass::JobPreSort()
 	gParams->mtxFiles.unlock();
 	if (!jobAct) return 0;
 
-	sort(buffer, buffer + buflen);
+	sort(buffer, buffer + datalen);
 
 	FileInfo *fileDstInfo = NULL;
 	gParams->mtxFiles.lock();
@@ -103,9 +103,16 @@ int WorkerClass::JobPreSort()
 	if (fileDstInfo) fileDstInfo->state = bsWriting;
 	gParams->mtxFiles.unlock();
 
-	char fileSuffix[0x20];
-	sprintf(fileSuffix, "_%04X", fileIdx);
-	outFileName = fileSrcInfo->name + fileSuffix;
+	if (datalen == fileSrcInfo->length)
+	{
+		outFileName = gParams->outFile.name;
+	}
+	else
+	{
+		char fileSuffix[0x20];
+		sprintf(fileSuffix, "_%04X", fileIdx);
+		outFileName = fileSrcInfo->name + fileSuffix;
+	}
 	fpOut = fopen(outFileName.c_str(), "wb");
 	if (fpOut == NULL)
 	{

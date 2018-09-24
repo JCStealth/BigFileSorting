@@ -49,6 +49,7 @@ struct GlobalParams
 	GlobalParams() { 
 		inFileSize = 0;
 		files = NULL;
+		buffer = NULL;
 		numOfFiles = 0; 
 		numOfWorkers = 0; 
 		memTotalSize = 0; 
