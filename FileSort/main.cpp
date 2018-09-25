@@ -51,6 +51,9 @@ int ParseCommandLine(int argc, char *argv[], GlobalParams *gParams)
 				gParams->outFile.name = argv[++arg];
 				outFileSet = true;
 				break;
+			case 'd':
+				gParams->deleteInterFiles = false;
+				break;
 			case 'g':
 				if (arg <= argc - 2)
 				{
@@ -87,16 +90,20 @@ int main(int argc, char *argv[])
 {
 
 	int res;
-	GlobalParams gParams;
+	
+	// глобальные параметры, загрузка default-значений
+	GlobalParams gParams;	
 	gParams.numOfWorkers = MAX_WORKERS;
 	gParams.memTotalSize = MAX_OPERATE_MEMORY;
 	gParams.inFile.name = FILENAME_IN;
 	gParams.outFile.name = FILENAME_OUT;
 
+	// загрузка в gParams значений из командной строки
 	res = ParseCommandLine(argc, argv, &gParams);
 	if (res < 0) return res;
 
-    if(res == 1)
+    // если задана генерация входного файла - генерировать его и выйти
+	if(res == 1)
 	{
 		FILE *fp = fopen(gParams.inFile.name.c_str(), "wb");
 		for (int i = 0; i < gParams.inFile.length; i++)
@@ -109,6 +116,7 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
+	// дозаполнение gParams
 	{
 		struct stat statIn;
 		stat(gParams.inFile.name.c_str(), &statIn);
@@ -121,9 +129,10 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	WorkerClass mainWorker(0, &gParams, 0);
-	WorkerClass **workers = NULL;
+	WorkerClass mainWorker(0, &gParams, 0);  // main-worker
+	WorkerClass **workers = NULL;            // другие workers
 
+	// запуск worker в других потоках
 	if (gParams.numOfWorkers > 1)
 	{
 		workers = new WorkerClass*[gParams.numOfWorkers];
@@ -132,8 +141,11 @@ int main(int argc, char *argv[])
 			workers[i] = new WorkerClass(i, &gParams);
 	}
 	
+	// запуск worker в этом потоке
 	mainWorker.Work();
 
+	// ожидание (если надо) других потоков и освобождение ресурсов
+    // (выходной файл формируется последним отработавшим потоком)
 	if (gParams.numOfWorkers > 1)
 	{
 		for (int i = 1; i < gParams.numOfWorkers; i++)
