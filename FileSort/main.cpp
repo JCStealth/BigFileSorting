@@ -20,6 +20,7 @@ int ParseCommandLine(int argc, char *argv[], GlobalParams *gParams)
 {
 	bool outFileSet = false;
 	bool inFileGenerate = false;
+	bool checkSorted = false;
 	for (int arg = 1; arg < argc; arg++)
 	{
 		int paramInt;
@@ -54,6 +55,9 @@ int ParseCommandLine(int argc, char *argv[], GlobalParams *gParams)
 			case 'd':
 				gParams->deleteInterFiles = false;
 				break;
+			case 'c':
+				checkSorted = true;
+				break;
 			case 'g':
 				if (arg <= argc - 2)
 				{
@@ -82,8 +86,9 @@ int ParseCommandLine(int argc, char *argv[], GlobalParams *gParams)
 		}
 	}
 
-	return inFileGenerate ? 1 : 0;
-
+	if (checkSorted) return 2;
+	if (inFileGenerate) return 1;
+	return 0;
 }
 
 int main(int argc, char *argv[])
@@ -115,6 +120,57 @@ int main(int argc, char *argv[])
 		fclose(fp);
 		return 1;
 	}
+
+	if (res == 2)
+	{
+		FILE *fp = fopen(gParams.inFile.name.c_str(), "rb");
+		if (fp == NULL)
+		{
+			fprintf(stderr, "Input file not found: %s\n", gParams.inFile.name.c_str());
+			return -1;
+		}
+		SortData_t lastVal = 0;
+		SortData_t chkSum = 0;
+		int i;
+		int cntBlock = 0;
+		int datalen = 0;
+		bool fSorted = false;
+		gParams.buffer = new SortData_t[gParams.memTotalSize];
+		SortData_t *buffer = gParams.buffer;
+		do
+		{
+			datalen = fread(buffer, sizeof(gParams.buffer[0]), gParams.memTotalSize, fp);
+			if (datalen > 0)
+			{
+				i = -1;
+				if (lastVal > buffer[0]) break;
+				for (i = 0; i < datalen - 1; i++)
+				{
+					if (buffer[i] > buffer[i + 1]) break;
+					chkSum ^= buffer[i];
+				}
+				lastVal = buffer[datalen - 1];
+				chkSum ^= lastVal;
+			}
+			if ((datalen < gParams.memTotalSize) && (datalen >= 0)) fSorted = true;
+			cntBlock++;
+		} while (datalen == gParams.memTotalSize);
+
+		int lastElemIdx = cntBlock*gParams.memTotalSize + i;
+		if (fSorted)
+			printf("File %s (%d elements) is sorted; csum=%08X\n", gParams.inFile.name.c_str(), lastElemIdx + 1, chkSum);
+		else
+			printf("File %s unsorted: [%d]=%08X [%d]=%08X\n", gParams.inFile.name.c_str(), 
+				lastElemIdx, (i < 0) ? lastVal : buffer[i], 
+				lastElemIdx + 1, buffer[i + 1]);
+
+		//delete[] gParams.buffer;
+		//gParams.buffer = NULL;
+
+		fclose(fp);
+		return fSorted ? 0 : 1;
+	}
+
 
 	// дозаполнение gParams
 	{
