@@ -15,7 +15,7 @@
 
 using namespace std;
 
-// 0 - ok, 1 - only generate input file, <0 - error
+// 0 - ok, 1 - only generate input file, 2 - only calculate checksum of file, <0 - error
 int ParseCommandLine(int argc, char *argv[], GlobalParams *gParams)
 {
 	bool outFileSet = false;
@@ -121,6 +121,8 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
+	// calculate checksum and exit
+	// checksum calculated as XOR of all values in a file specified
 	if (res == 2)
 	{
 		FILE *fp = fopen(gParams.inFile.name.c_str(), "rb");
@@ -134,41 +136,51 @@ int main(int argc, char *argv[])
 		int i;
 		int cntBlock = 0;
 		int datalen = 0;
-		bool fSorted = false;
+		int cntSortMiss = 0;
+		int firstMissOffset = -1;
 		gParams.buffer = new SortData_t[gParams.memTotalSize];
 		SortData_t *buffer = gParams.buffer;
 		do
 		{
 			datalen = fread(buffer, sizeof(gParams.buffer[0]), gParams.memTotalSize, fp);
+			if (cntBlock == 0) chkSum = buffer[0];
 			if (datalen > 0)
 			{
-				i = -1;
-				if (lastVal > buffer[0]) break;
-				for (i = 0; i < datalen - 1; i++)
+				for (i = cntBlock ? -1 : 0; i < datalen - 1; i++)
 				{
-					if (buffer[i] > buffer[i + 1]) break;
-					chkSum ^= buffer[i];
+					if ( ((i < 0) ? lastVal : buffer[i]) > buffer[i + 1])
+					{
+						if (firstMissOffset < 0) firstMissOffset = (cntBlock * gParams.memTotalSize) + i;
+						cntSortMiss++;
+					}
+					chkSum ^= buffer[i+1];
 				}
-				lastVal = buffer[datalen - 1];
-				chkSum ^= lastVal;
+				lastVal = buffer[i++];
 			}
-			if ((datalen < gParams.memTotalSize) && (datalen >= 0)) fSorted = true;
-			cntBlock++;
+			//if ((datalen < gParams.memTotalSize) && (datalen >= 0)) fSorted = true;
+			if (datalen == gParams.memTotalSize) cntBlock++;
 		} while (datalen == gParams.memTotalSize);
 
 		int lastElemIdx = cntBlock*gParams.memTotalSize + i;
-		if (fSorted)
+		printf("File %s (%d elements [%d*%d+%d]) csum=%08X %s\n", gParams.inFile.name.c_str(), lastElemIdx, 
+			cntBlock, gParams.memTotalSize, i,
+			chkSum, (firstMissOffset < 0) ? "[SORTED]" : "[UNSORTED]");
+		if (firstMissOffset >= 0)
+			printf("first sort miss: idx=%d, total misses: %d\n", firstMissOffset, cntSortMiss);
+
+
+		/*if (fSorted)
 			printf("File %s (%d elements) is sorted; csum=%08X\n", gParams.inFile.name.c_str(), lastElemIdx + 1, chkSum);
 		else
 			printf("File %s unsorted: [%d]=%08X [%d]=%08X\n", gParams.inFile.name.c_str(), 
 				lastElemIdx, (i < 0) ? lastVal : buffer[i], 
-				lastElemIdx + 1, buffer[i + 1]);
+				lastElemIdx + 1, buffer[i + 1]);*/
 
 		//delete[] gParams.buffer;
 		//gParams.buffer = NULL;
 
 		fclose(fp);
-		return fSorted ? 0 : 1;
+		return (firstMissOffset < 0) ? 0 : 1;
 	}
 
 
