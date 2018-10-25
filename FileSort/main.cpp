@@ -7,6 +7,12 @@
 #include "structs.h"
 #include "worker.h"
 
+#ifndef __WIN32
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 #define FILENAME_IN  "unsorted.dmp"
 #define FILENAME_OUT "sorted.dmp"
 //#define INPUT_FILE_LENGTH (1024*1024)  // for input file generation: number of elements generated
@@ -95,19 +101,19 @@ int main(int argc, char *argv[])
 {
 
 	int res;
-	
-	// глобальные параметры, загрузка default-значений
+
+	// РіР»РѕР±Р°Р»СЊРЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹, Р·Р°РіСЂСѓР·РєР° default-Р·РЅР°С‡РµРЅРёР№
 	GlobalParams gParams;	
 	gParams.numOfWorkers = MAX_WORKERS;
 	gParams.memTotalSize = MAX_OPERATE_MEMORY;
 	gParams.inFile.name = FILENAME_IN;
 	gParams.outFile.name = FILENAME_OUT;
 
-	// загрузка в gParams значений из командной строки
+	// Р·Р°РіСЂСѓР·РєР° РІ gParams Р·РЅР°С‡РµРЅРёР№ РёР· РєРѕРјР°РЅРґРЅРѕР№ СЃС‚СЂРѕРєРё
 	res = ParseCommandLine(argc, argv, &gParams);
 	if (res < 0) return res;
 
-    // если задана генерация входного файла - генерировать его и выйти
+    // РµСЃР»Рё Р·Р°РґР°РЅР° РіРµРЅРµСЂР°С†РёСЏ РІС…РѕРґРЅРѕРіРѕ С„Р°Р№Р»Р° - РіРµРЅРµСЂРёСЂРѕРІР°С‚СЊ РµРіРѕ Рё РІС‹Р№С‚Рё
 	if(res == 1)
 	{
 		FILE *fp = fopen(gParams.inFile.name.c_str(), "wb");
@@ -184,7 +190,7 @@ int main(int argc, char *argv[])
 	}
 
 
-	// дозаполнение gParams
+	// РґРѕР·Р°РїРѕР»РЅРµРЅРёРµ gParams
 	{
 		struct stat statIn;
 		stat(gParams.inFile.name.c_str(), &statIn);
@@ -198,9 +204,9 @@ int main(int argc, char *argv[])
 	}
 
 	WorkerClass mainWorker(0, &gParams, 0);  // main-worker
-	WorkerClass **workers = NULL;            // другие workers
+	WorkerClass **workers = NULL;            // РґСЂСѓРіРёРµ workers
 
-	// запуск worker в других потоках
+	// Р·Р°РїСѓСЃРє worker РІ РґСЂСѓРіРёС… РїРѕС‚РѕРєР°С…
 	if (gParams.numOfWorkers > 1)
 	{
 		workers = new WorkerClass*[gParams.numOfWorkers];
@@ -209,11 +215,11 @@ int main(int argc, char *argv[])
 			workers[i] = new WorkerClass(i, &gParams);
 	}
 	
-	// запуск worker в этом потоке
+	// Р·Р°РїСѓСЃРє worker РІ СЌС‚РѕРј РїРѕС‚РѕРєРµ
 	mainWorker.Work();
 
-	// ожидание (если надо) других потоков и освобождение ресурсов
-    // (выходной файл формируется последним отработавшим потоком)
+	// РѕР¶РёРґР°РЅРёРµ (РµСЃР»Рё РЅР°РґРѕ) РґСЂСѓРіРёС… РїРѕС‚РѕРєРѕРІ Рё РѕСЃРІРѕР±РѕР¶РґРµРЅРёРµ СЂРµСЃСѓСЂСЃРѕРІ
+    // (РІС‹С…РѕРґРЅРѕР№ С„Р°Р№Р» С„РѕСЂРјРёСЂСѓРµС‚СЃСЏ РїРѕСЃР»РµРґРЅРёРј РѕС‚СЂР°Р±РѕС‚Р°РІС€РёРј РїРѕС‚РѕРєРѕРј)
 	if (gParams.numOfWorkers > 1)
 	{
 		for (int i = 1; i < gParams.numOfWorkers; i++)
