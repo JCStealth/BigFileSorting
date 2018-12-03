@@ -24,6 +24,13 @@ int WorkerClass::GetFileBlkCntFromName(string fileName)
 }
 #endif
 
+void WorkerClass::Trace(int level, const char *fmt, ...)
+{
+  va_list args;
+  if (level >= dbgLevel)
+    fprintf(dbgFile, fmt, args);
+}
+
 // основная worker-функция
 int WorkerClass::Work()
 {

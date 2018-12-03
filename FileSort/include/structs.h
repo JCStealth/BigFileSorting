@@ -17,6 +17,15 @@ enum BlockStates
 	bsWorking = (bsToSort | bsToMerge | bsReading | bsWriting),
 };
 
+enum DebugLevels
+{
+	dbgNone = 0,
+	dbgFatal,
+	dbgWarning,
+	dbgInfo,
+	dbgDeveloper,
+};
+
 typedef unsigned int SortData_t;
 
 // элемент списка файлов
@@ -49,6 +58,9 @@ struct GlobalParams
 	
 	bool deleteInterFiles;          // удалять отработанные промежуточные файлы (false помогает при отладке)
 
+	int dbgLevel;
+	FILE *dbgFile;
+
 	// конструктор
 	GlobalParams() { 
 		inFileSize = 0;
@@ -59,6 +71,8 @@ struct GlobalParams
 		memTotalSize = 0; 
 		memBlockSize = 0;
 		deleteInterFiles = true;
+		dbgLevel = dbgDeveloper;
+		dbgFile = stdout;
 	};
 
 	// деструктор: закрыть открытые файлы, освободить память

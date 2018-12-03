@@ -21,6 +21,8 @@ private:
 	int buflen;
 	int datalen;                    // длина обрабатываемых данных (<= buflen)
 	FileInfo *files;                // gParams->files
+	int dbgLevel;
+	FILE *dbgFile;
 
 	//int GetFileBlkCntFromName(std::string fileName);        // определить по имени файла количество блоков данных в нем
 	int JobPreSort();                                       // задача предварительной сортировки
@@ -44,7 +46,7 @@ public:
 	int Work();
 
 	// для отладочного вывода
-	void Trace(FILE *dbgFile);
+	void Trace(int level, const char *fmt, ...);
 
 	// конструктор
 	// IN: id - идентификатор worker'а; сквозная, [1..numOfWorkers) (0 зарезервирован для worker-0, запускаемого из основного потока)
@@ -62,6 +64,8 @@ public:
 		fpOut = NULL;
 		totalPreSorted = 0;
 		totalSorted = 0;
+		dbgLevel = globParams->dbgLevel;
+		dbgFile = globParams->dbgFile;
 		if(startThread) thd = std::thread(&WorkerClass::Work, this);
 	};
 	//~WorkerClass();
